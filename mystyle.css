@@ -1,0 +1,160 @@
+body {
+    margin:     10px;
+    background: #AAA;
+}
+
+label {
+    position:     absolute;
+    text-align:   left;
+    font-family:  'Audiowide', cursive;
+}
+
+.graph {
+    position:   absolute;
+    border:     solid black;
+    background: #EEE;
+    box-shadow: 10px 10px 5px #888888;
+    border-width: thin;
+}
+
+@font-face {
+    font-family: Audiowide;
+    src: url(Libraries/Audiowide-Regular.ttf);
+}
+
+#my_canvas {
+    background: rgb(245,245,207);
+}
+
+#raphael_canvas {
+    position:     absolute;
+    left:         625px;
+    top:          170px;
+    //border-style: ridge;
+    //border-width: 4px;
+}
+
+#tabs {
+    width:      1885px;
+    height:     945px;
+    background: rgb(245,245,207);
+    border:     #000 3px solid;
+}.ui-tabs .ui-tabs-nav {
+    background: rgb(245,245,207);
+    border: none;
+}
+
+#slider_RPM   { position: absolute;  left: 100px;  top: 235px;  width: 330px; }
+#slider_Fuel  { position: absolute;  left: 1075px; top: 235px;  width: 330px; }
+#box_RPM      { position: absolute;  left: 450px;  top: 226px;  width: 50px;  font-size: larger;  font-weight: bold; }
+#box_Fuel     { position: absolute;  left: 1425px; top: 226px;  width: 50px;  font-size: larger;  font-weight: bold; }
+
+#radio_anim  { position: absolute;  left: 100px;   top: 620px; }
+
+#lbl_1          { left: 320px;  top: 700px;  font-size: 25px; font-family: arial, helvetica, sans-serif; opacity: 0.3}
+#lbl_2          { left: 320px;  top: 735px;  font-size: 25px; font-family: arial, helvetica, sans-serif; opacity: 0.3}
+#lbl_3          { left: 320px;  top: 770px;  font-size: 25px; font-family: arial, helvetica, sans-serif; opacity: 0.3}
+#lbl_4          { left: 320px;  top: 805px;  font-size: 25px; font-family: arial, helvetica, sans-serif; opacity: 0.3}
+#lbl_knock      { left: 695px;  top: 805px;  font-size: 25px; opacity: 0.2;  color: red;  text-shadow: 2px 2px #666666 }
+#lbl_deg        { left: 100px;  top: 700px;  font-size: 25px; font-family: arial, helvetica, sans-serif;}
+#lbl_rpm        { left: 100px;  top: 753px;  font-size: 25px; font-family: arial, helvetica, sans-serif;}
+#lbl_rev        { left: 100px;  top: 805px;  font-size: 25px; font-family: arial, helvetica, sans-serif;}
+#lbl_anim       { left: 100px;  top: 580px;  font-size: 25px; }
+#lbl_rpmslide   { left: 100px;  top: 195px;  font-size: 25px; }
+#lbl_fuelslide  { left: 1075px; top: 195px;  font-size: 25px; }
+#lbl_graphRPM   { left: 100px;  top: 290px;  font-size: 25px; }
+#lbl_graphKnock { left: 1550px; top: 290px;  font-size: 25px; }
+#lbl_graphTiming{ left: 1075px; top: 290px;  font-size: 25px; }
+#lbl_graphgifknock    { left: 1075px; top: 570px; font-size: 25px; }
+#lbl_graphgiffftknock { left: 1360px; top: 570px; font-size: 25px; }
+
+#graph_time_noknock { display:  anything; left: 1075px; top: 610px; }
+#graph_time_knock   { display:  anything; left: 1075px; top: 610px; }
+#graph_FFT_noknock  { display:  anything; left: 1360px; top: 610px; }
+#graph_FFT_knock    { display:  anything; left: 1360px; top: 610px; }
+
+#graph_time_noknock2{ display:  anything; left: 225px;  top: 460px; box-shadow: none; }
+#graph_time_knock2  { display:  anything; left: 225px;  top: 460px; box-shadow: none; }
+#graph_FFT_noknock2 { display:  anything; left: 1075px; top: 165px; box-shadow: none; }
+#graph_FFT_knock2   { display:  anything; left: 1075px; top: 165px; box-shadow: none; }
+
+#graph_rpm          { position: absolute; left: 100px;  top: 330px; }
+#graph_knock1       { position: absolute; left: 1550px; top: 330px; }
+#graph_knock2       { position: absolute; left: 1560px; top: 480px; background: #EEE; border: solid black; border-width: thin; }
+#graph_timing       { position: absolute; left: 1075px; top: 330px; }
+#legend             { position: absolute; left: 1380px; top: 320px; background: rgba(0,0,0,0); color: #000; font-size: small;}
+
+#rectangle {
+    position:         absolute;
+    left:             685px;
+    top:              790px;
+    width:            200px;
+    height:           50px;
+    border-style:     ridge;
+    background-color: #DDD;
+    padding:          2px;
+    border-width:     4px;
+    box-shadow:       2px 2px 5px #888888; 
+}
+
+#highlight_box {
+    position:         absolute;
+    left:             50px;
+    top:              170px;
+    width:            510px;
+    height:           680px;
+    background-color: #000;
+    opacity:          0.08;
+}
+
+#highlight_box2 {
+    position:         absolute;
+    left:             1020px;
+    top:              170px;
+    width:            840px;
+    height:           680px;
+    background-color: #000;
+    opacity:          0.08;
+}
+
+#title {
+    left:        290px;
+    top:         50px;
+    font-size:   45px;
+    font-weight: 900;
+    //text-decoration:underline;
+}
+#subtitle {
+    left:        290px;
+    top:         105px;
+    font-size:   27px;
+    font-weight: 500;
+}
+
+#logo {
+    position: absolute;
+    left:     1540px;
+    top:      30px;
+    opacity:  0.7;
+}
+#watermark {
+    position: absolute;
+    left:     1580px;
+    top:      900px;
+    opacity:  0.7;
+}
+
+#diagram {
+    position: absolute;
+    left:     60px;
+    top:      70px;
+    padding:  15px;
+}
+#serial {
+    position:   absolute;
+    left:       250px;
+    top:        825px;
+    height:     80px;
+    width:      200px;
+    background: lavender;
+}

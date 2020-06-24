@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Engine Knock Detection</title>
+        
+        <script src="Libraries/raphael.js" type="text/javascript" charset="utf-8"></script>
+        <script src="Libraries/jquery-1.10.2.js"></script>
+	<script src="Libraries/jquery-ui-1.10.4.custom.js"></script>
+        <script src="Libraries/d3.v3.js"></script>
+        <script src="Libraries/Rickshaw/rickshaw.js"></script>
+        <script src="/socket.io/socket.io.js"></script>
+        <script src="objects.js"></script>
+        
+        <link rel="stylesheet" type="text/css" href="mystyle.css">   
+        <link rel="stylesheet" type="text/css" href="Libraries/jquery-ui.css"> 
+        <link rel="stylesheet" type="text/css" href="Libraries/Rickshaw/src/css/graph.css">
+        <link rel="stylesheet" type="text/css" href="Libraries/Rickshaw/src/css/detail.css">
+        <link rel="stylesheet" type="text/css" href="Libraries/Rickshaw/src/css/legend.css">
+    </head>
+    
+    <body>
+        <script>
+        /* ******* Graphics Variables ****** */
+        var c;      /* Canvas                */
+        var piston; /* Piston Object         */
+        var cog;    /* COG Object            */
+        var rod;    /* Connecting Rod Object */
+        var spark;  /* Spark image           */
+        var gas;    /* Air * Fuel mixture    */
+        var gasin;  /* Gas trail IN          */
+        var gasout; /* Gas trail OUT         */
+        var flame;  /* Flame wall - RED      */
+        var flame2; /* Flame wall - ORANGE   */
+        var flame3; /* Flame wall - YELLOW   */
+        var fuelmix;/* Fuel Mixture          */
+        var knock;  /* Knocking Flame        */
+        var wall;   /* Invisible wall to keep expanding flame wall within gas chamber */
+        var fuel_wall; /* Invisible to keep fuel injection to cone shape */
+        var pathArray;
+        var spray_origin = { x: 114, y: 191 };
+        var spray_end    = { x: 300, y: 275 };
+        /* ********************************* */
+
+        /* ******* Engine Properties ******* */
+        var deg = 0;   /* Current angle of cog wheel                */
+        var rpm = 15;  /* Magnitude of which to rotate each update  */
+        var fuel = 15; /* "Volume" of fuel to inject                */
+        /* ********************************* */ 
+
+        /* ******* Graph Variables ******** */
+        var graph_rpm;     /* Graph: RPM of engine                 */
+        var graph_knock1;  /* Graph: Knock vs no knock occurences  */
+        var graph_knock2;  /* Graph: Knock vs no knock occurences  */
+        var graph_timing;  /* Graph: ECU Timing diagram            */
+        /* ******************************** */
+
+        var timestamp = 0; /* Time stamp after each rotation       */
+        var tempTime  = 0; /* Temp time stamp to compare with last */
+        var samples   = 0; /* Count no of rotations happened       */
+        var avg       = 0; /* Running average RPM value            */
+
+        var timer; /* Store timer ID of animation/update loop */
+
+        var knocked       = false; /* Only perform the knock animation once */
+        var perform_knock = false; /* Perform knock animation               */
+        var knock_count = [];      /*  Knock vs no knock occurences         */
+
+        var socket; /* Web socket which communicates with server */
+        
+        var server = false; /* False: Running the webpage locally
+                             * True:  Running the webpage from server */
+                            
+        /* ############### END OF VARIABLE INITIALISATION ############### */
+        /* ############################################################## */
+
+        function init() {
+            /* Initialise canvas for drawing */
+            c = Raphael("raphael_canvas",330,600);
+
+            /* Fuel which is sprayed out the fuel injector */
+            fuelmix = c.circle(112, 193, 150).attr({fill : "green",
+                                          "stroke-width" : 0});     
+
+            /* 'Invisible' wall to keep the expanding fuel injection to a cone shape */
+            fuel_wall = c.path();
+            pathArray = ['M111,195', 'L300,280', 'L100,300', 'L100,170', 'L150,140', 'L190,140', 'L300,270', 'L114,186', 'Z'];        
+            fuel_wall.attr({"stroke-width": 0,
+                                      path: pathArray,
+                                      fill: "#F5F5CF"});
+
+            var new_point1 = rotate_point(spray_end.x, spray_end.y, spray_origin.x, spray_origin.y, fuel);
+            var new_point2 = rotate_point(spray_end.x, spray_end.y, spray_origin.x, spray_origin.y, -fuel);
+            pathArray[1] = 'L' + new_point1.x + ',' + new_point1.y;
+            pathArray[6] = 'L' + new_point2.x + ',' + new_point2.y;
+            fuel_wall.attr({path: pathArray});
+
+            /* Air mixture inside the gas chamber */
+            gas = c.path();
+            gas.attr({"stroke-width": 0,
+                      path: "M110,300   L226,300    L226,185    L180,140    L155,140    L110,185    Z",
+                      fill: "#0080FF",
+                      opacity: 0});       
+
+            /* Flame wall from explosion */
+            flame  = c.circle(169, 173, 0).attr({fill : "red",    "stroke-width" : 1});
+            flame2 = c.circle(169, 173, 0).attr({fill : "orange", "stroke-width" : 0});           
+            flame3 = c.circle(169, 173, 0).attr({fill : "yellow", "stroke-width" : 0});
+            /* Flame from knocking effect */
+            knock  = c.circle(226, 220, 0).attr({fill : "red",    "stroke-width" : 2, opacity: 0});    
+
+            /* 'Invisible' wall around chamber to stop flame wall spilling out */
+            wall = c.path();
+            wall.attr({"stroke-width": 0,
+                      path: "M230,405   L230,185   L180,140   L155,140   L107,185\n\
+                             L107,405   L-10,405    L1,-10    L380,-10   L380,405   Z",
+                      fill: "#F5F5CF"});
+            c.rect(100,300,140,200).attr({"stroke-width": 0, fill : "#F5F5CF"});
+
+            /* Fading gas trails entering and exiting the gas chamber */
+            gasin  = c.image("Images/GasIn.png",  32, 104, 115, 80).attr({opacity : 0});   
+            gasout = c.image("Images/GasOut.png", 191, 110, 99,  68).attr({opacity : 0}).transform("r-5");
+
+            cog = new Cog();       /* Cog Object */
+            rod = new Rod();       /* Connecting Rod Object */
+            piston = new Piston(); /* Piston Object */
+            lValve = new LValve(); /* Left Valve Object */
+            rValve = new RValve(); /* Right Valve Object */
+
+            c.image("Images/Body.png", 15, 45, 306,  475); /* Engine Enclosure */
+            
+            spark = c.image("Images/Spark.png",146, 150, 43.6,   40.4).attr({opacity:0}); /* Ignition spark */
+
+            initJQuery();
+            initGraphs(); 
+             
+            /* Only initialise the socket if wanting to communicate with server */
+            if(server === true) initSocket();
+
+            timer = setInterval(update, 30); /* Call update() every 30ms */ 
+        }
+
+        function update() {
+            /* ============================================== */
+            /* ============== FUEL & AIR INTAKE ============= */
+            if(deg >= 0 && deg <= 180) {
+
+                setLabel(1);
+
+                lValve.open();
+                rValve.close();
+
+                gasin.attr({opacity : deg / 320});
+                gas.attr({  opacity : deg / 320});
+
+                if(deg >= 0 && deg <= 90)   
+                    fuelmix.attr({ r : (deg / 90) * 160,  opacity : (deg/180)});
+                else 
+                    fuelmix.attr({ opacity : 1 - ((deg/180)*1.2)});
+            }
+            /* ============================================== */
+            /* ================= COMPRESSION ================ */
+            else if(deg >= 180 && deg <= 320) {
+                setLabel(2);
+
+                lValve.close();
+
+                gasin.attr({opacity : 0.5 - (deg - 180) / 140});
+                gas.attr({  opacity : deg / 320});
+
+            }
+            /* ============================================== */
+            /* ================== COMBUSTION ================ */
+            else if(deg >= 320 && deg <= 540) {                    
+                setLabel(3);
+
+                gas.attr({opacity : 1 - ((deg - 320) / 100)});
+                spark.attr({opacity : 1 - (deg - 320) / 75});
+                
+                /* Expanding flame wall */
+                flame.attr({ r : ((deg - 320) / 145) * 150,      opacity : 1 - ((deg - 320) / 400)});
+                flame2.attr({r : ((deg - 320) / 145) * 100,      opacity : 1 - ((deg - 320) / 200)});
+                flame3.attr({r : ((deg - 320) / 145) * 50,       opacity : 1 - ((deg - 320) / 200)});
+                if(flame.attr("r") > 130) { flame.attr({r: 130}); }
+
+                if(perform_knock === true) {
+                    knock.attr({
+                              cy : piston.joint().y - 69,
+                               r : ((deg - 320) / 72.5) *75,
+                         opacity : 1 - ((deg - 320) / 100)
+                    });
+                    if(knocked === false) {
+                        knocked = true; /* Only want to perform shaking animation once */
+                        piston.knock();
+                        document.getElementById("lbl_knock").style.opacity = 1;   
+                    }
+                }
+                else if(knocked === false) knocked = true;
+            }
+            /* ============================================== */
+            /* ================== EXHAUSTION ================ */
+            else if(deg >= 540 && deg <= 720) {
+                document.getElementById("lbl_knock").style.opacity = 0.2;  
+                setLabel(4);
+
+                knocked = false;
+
+                rValve.open();
+
+                flame.attr({ opacity : 1 - ((deg - 320) / 400) });         
+                gasout.attr({opacity : 1 - (((deg - 320) / 400)) }); 
+            }
+            /* ============================================= */
+            /* ============================================= */
+
+            document.getElementById("lbl_deg").innerHTML = "<b>Degrees:</b>\t" + deg + "\xB0";
+            deg += rpm; /* Increment the current degrees */
+            deg = deg % 720; /* Keep rotation value within 720 degrees bound */
+
+            tempTime = timestamp;
+            timestamp = new Date().getTime();
+
+            var x = (timestamp - tempTime) / 1000;
+            var y = x * 360/rpm;
+
+            avg += y;
+            samples++;
+
+            if(samples === 10) { /* Average over 10 samples */                   
+                avg = (avg / samples);
+
+                graph_rpm.series.addData({one: Math.round((60/avg)*100)/100});
+                graph_rpm.render();
+                graph_knock1.render();
+                graph_knock2.render();
+
+                document.getElementById("lbl_rpm").innerHTML = "<b>RPM:</b> " + Math.round((60/avg)*100)/100;
+                document.getElementById("lbl_rev").innerHTML = "<b>1 Rev:</b> " + Math.round(avg * 100)/100 + "s";
+                avg = 0;
+                samples = 0;
+            }
+            
+            cog.rotate(deg);     
+        }
+
+        function initSocket()
+        {
+            socket = io();
+            
+            /* Listener for when data message received */
+            socket.on('message', function(msg) {
+                var input = msg.split(',');
+
+                var newRPM = parseInt(input[0]);
+                var newFuel = parseInt(input[1]);
+                var knock = parseInt(input[2]);
+
+                setRPM(newRPM);
+                setFuel(newFuel);
+                
+                if(knock !== 0) {
+                    perform_knock = true;
+
+                    document.getElementById("graph_time_knock").style.display   = "block";
+                    document.getElementById("graph_time_noknock").style.display = "none";            
+                    document.getElementById("graph_FFT_knock").style.display   = "block";
+                    document.getElementById("graph_FFT_noknock").style.display = "none";
+                    
+                    document.getElementById("graph_time_knock2").style.display   = "block";
+                    document.getElementById("graph_time_noknock2").style.display = "none";            
+                    document.getElementById("graph_FFT_knock2").style.display   = "block";
+                    document.getElementById("graph_FFT_noknock2").style.display = "none";
+                    
+                    graph_knock1.series[0].data[1] =  { x: 1, y: knock };
+                    graph_knock2.series[0].data[1] =  { x: 1, y: knock };                    
+                } else {
+                    perform_knock = false;
+                    
+                    document.getElementById("graph_time_knock").style.display   = "none";
+                    document.getElementById("graph_time_noknock").style.display = "block";                  
+                    document.getElementById("graph_FFT_knock").style.display   = "none";
+                    document.getElementById("graph_FFT_noknock").style.display = "block";
+                    
+                    document.getElementById("graph_time_knock2").style.display   = "none";
+                    document.getElementById("graph_time_noknock2").style.display = "block";                  
+                    document.getElementById("graph_FFT_knock2").style.display   = "none";
+                    document.getElementById("graph_FFT_noknock2").style.display = "block";
+                    
+                    graph_knock1.series[0].data[1] =  { x: 1, y: knock };
+                    graph_knock2.series[0].data[1] =  { x: 1, y: knock };
+                }
+            });   
+        }
+
+        function setRPM(newRPM)
+        {
+            $( "#slider_RPM" ).slider('value', newRPM);
+            $( "#box_RPM" ).val(newRPM);
+            rpm = newRPM;
+        }
+
+        function setFuel(newFuel)
+        {
+            $( "#slider_Fuel" ).slider('value', newFuel);
+            $( "#box_Fuel" ).val(newFuel + "\xB0");
+            fuel = newFuel;
+        }
+
+        function initJQuery()
+        {
+            /* =============================================== */
+            /* ================= SPEED SLIDER  =============== */
+            $( "#slider_RPM" ).slider({
+                value: rpm,
+                min:   1,
+                max:   40,
+                step:  1,
+                /* Slide Listener */
+                slide: function( event, ui ) {
+                    $( "#box_RPM" ).val(ui.value);
+                    rpm = ui.value;                   
+                    if(server === true) socket.emit('rpm', ui.value);
+                }
+            });
+            $( "#box_RPM" ).val(rpm); /* Show current slider value */
+
+            /* =============================================== */
+            /* ============= FUEL INJECTION SLIDER =========== */
+            $( "#slider_Fuel" ).slider({
+                value: fuel,
+                min:   0,
+                max:   24,
+                step:  1,
+                /* Slide Listener */
+                slide: function( event, ui ) {
+                    var new_point1 = rotate_point(spray_end.x, spray_end.y, spray_origin.x, spray_origin.y, $("#slider_Fuel").slider("value"));
+                    var new_point2 = rotate_point(spray_end.x, spray_end.y, spray_origin.x, spray_origin.y, -$("#slider_Fuel").slider("value"));
+
+                    pathArray[1] = 'L' + new_point1.x + ',' + new_point1.y;
+                    pathArray[6] = 'L' + new_point2.x + ',' + new_point2.y;
+
+                    fuel_wall.attr({path: pathArray});
+                    $( "#box_Fuel" ).val(ui.value + "\xB0");
+                    graph_timing.series[1].data[1] =  { x: 15 + (24 - ui.value), y: 30 };
+                    graph_timing.series[1].data[2] =  { x: 15 + (24 - ui.value), y: 40 }; 
+                    graph_timing.render();
+
+                    if(server === true) socket.emit('fuel', ui.value);
+                }
+            });
+            $( "#box_Fuel" ).val(fuel + "\xB0"); /* Show current degree value */
+
+
+            /* =============================================== */
+            /* ======== START/STOP ENGINE BUTTON  ========= */
+            $("#radio_anim").buttonset();
+            $("#radio_anim input[type=radio]").change(function() {
+                if(this.id === "start") {
+                    if(server === true) socket.emit('start', 0);
+                }
+                else if(this.id === "stop") {
+                    if(server === true) socket.emit('stop', 0);
+                }
+            });
+            
+            $( "#tabs" ).tabs({});
+        }
+
+        function initGraphs()
+        {
+            /* ============================================================== */
+            /* ======================  ENGINE RPM GRAPH  ==================== */
+            graph_rpm = new Rickshaw.Graph( {
+                element: document.getElementById("graph_rpm"),
+                width: 400,
+                height: 200,
+                renderer: 'line',
+                min: 0,
+                max: 240,
+                series: new Rickshaw.Series.FixedDuration([{ name: 'one', color: 'darkred' }], undefined, {
+                    timeInterval: 150,
+                    maxDataPoints: 100,
+                    timeBase: new Date().getTime() / 1000
+                })
+            });
+
+            var y_axis = new Rickshaw.Graph.Axis.Y( {
+                graph: graph_rpm,
+                pixelsPerTick: 20
+            });
+            var x_axis = new Rickshaw.Graph.Axis.Time({
+                graph: graph_rpm
+            });
+            graph_rpm.render();
+            /* ============================================================== */
+            /* =======================  KNOCK BAR GRAPH  ==================== */
+
+            /* Knock graph on Tab 1 */
+            graph_knock1 = new Rickshaw.Graph( {
+                element: document.querySelector("#graph_knock1"),
+                width: 250,
+                height: 200,
+                min: 0,
+                max: 150,
+                renderer: 'bar',
+                series: [{
+                    name: "Knock",
+                    data: [ {x: 0, y: 0}, { x: 1, y: 0 }, {x: 2, y: 0} ],
+                    color: 'orange'
+                }]
+            });
+            var y_axis_knock = new Rickshaw.Graph.Axis.Y( {
+                graph: graph_knock1,
+                pixelsPerTick: 20
+            });                
+            graph_knock1.render();
+            
+            /* Knock graph on Tab 2 */
+            graph_knock2 = new Rickshaw.Graph( {
+                element: document.querySelector("#graph_knock2"),
+                width: 190,
+                height: 170,
+                min: 0,
+                max: 150,
+                renderer: 'bar',
+                series: [{
+                    name: "Knock",
+                    data: [ {x: 0, y: 0}, { x: 1, y: 0 }, {x: 2, y: 0} ],
+                    color: 'orange'
+                }]
+            });
+            var y_axis_knock = new Rickshaw.Graph.Axis.Y( {
+                graph: graph_knock2,
+                pixelsPerTick: 20
+            });                
+            graph_knock2.render();
+     
+            /* ============================================================== */
+            /* ========================  NEW GRAPH  ========================= */
+
+            graph_timing = new Rickshaw.Graph( {
+                element: document.querySelector("#graph_timing"),
+                width: 400,
+                height: 200,
+                min: 0,
+                
+                max: 80,
+                renderer: 'line',
+                interpolation: 'linear',
+                series: [{
+                    name: "Knock",
+                    data: [ {x: 0, y: 10},  {x: 40, y: 10}, {x: 40, y: 20},
+                            {x: 65, y: 20}, {x: 65, y: 10}, {x: 100, y: 10}],
+                    color: '#0000FF'
+                },
+                {
+                    name: "Fuel",
+                    data: [ {x: 0, y: 30},  {x: 25, y: 30}, {x: 25, y: 40},
+                            {x: 50, y: 40}, {x: 50, y: 30}, {x: 100, y: 30}],
+                    color: '#008000'
+                },
+                {
+                    name: "Spark",
+                    data: [ {x: 0, y: 50},  {x: 52, y: 50}, {x: 52, y: 60},
+                            {x: 55, y: 60}, {x: 55, y: 50}, {x: 56, y: 50},
+                            {x: 100, y: 50}],
+                    color: '#FF0000'
+                },
+                {
+                    name: "Top Center",
+                    data: [ {x: 60, y: 80}, {x: 60, y: 0}],
+                    color: '#000',
+                    opacity: 0.1
+                }]
+            });
+           
+            var y_axis_knock = new Rickshaw.Graph.Axis.Y( {
+                graph: graph_timing,
+                pixelsPerTick: 20,
+                tickFormat: function(n) {}
+            });   
+
+            var x_axis = new Rickshaw.Graph.Axis.X({
+                graph: graph_timing,
+                //element: document.getElementById('x_axis'),
+                pixelsPerTick: 20,
+                tickFormat: function(n) {}
+                //orientation: 'bottom'
+            });
+            
+            var legend = new Rickshaw.Graph.Legend( {
+                element: document.querySelector('#legend'),
+                graph: graph_timing,
+                color: '#000000'
+            });
+            graph_timing.render();
+            /* ============================================================== */
+            /* ============================================================== */
+        }
+        
+
+        function setLabel(step)
+        {
+            switch(step)
+            {
+                case 1:
+                    {   /* Previous */
+                        document.getElementById("lbl_4").style.color   = "black";
+                        document.getElementById("lbl_4").style.opacity = 0.3;
+                        /* Current */
+                        document.getElementById("lbl_1").style.color = "blue"; 
+                        document.getElementById("lbl_1").style.opacity = 1;
+                        break;
+                    }
+                case 2:
+                    {   /* Previous */
+                        document.getElementById("lbl_1").style.color   = "black";
+                        document.getElementById("lbl_1").style.opacity = 0.3;
+                        /* Current */
+                        document.getElementById("lbl_2").style.color = "green";
+                        document.getElementById("lbl_2").style.opacity = 1;
+                        break;
+                    }
+                case 3:
+                    {   /* Previous */
+                        document.getElementById("lbl_2").style.color   = "black";
+                        document.getElementById("lbl_2").style.opacity = 0.3;
+                        /* Current */
+                        document.getElementById("lbl_3").style.color = "red";
+                        document.getElementById("lbl_3").style.opacity = 1;
+                        break;
+                    }
+                case 4:
+                    {   /* Previous */                 
+                        document.getElementById("lbl_3").style.color   = "black";
+                        document.getElementById("lbl_3").style.opacity = 0.3;
+                        /* Current */
+                        document.getElementById("lbl_4").style.color = "darkblue";
+                        document.getElementById("lbl_4").style.opacity = 1;
+                        break;
+                    }
+            }
+        }
+        
+
+        /* Rotate point around another point */
+        function rotate_point(pointX, pointY, originX, originY, angle) {
+            angle = angle * Math.PI / 180.0;
+            return {
+                x: Math.cos(angle) * (pointX-originX) - Math.sin(angle) * (pointY-originY) + originX,
+                y: Math.sin(angle) * (pointX-originX) + Math.cos(angle) * (pointY-originY) + originY
+            };
+        }
+
+        /* Determine the angle between two points */
+        function getAngle(cX, cY, tX, tY) {
+            var angle = (180/Math.PI) * (Math.atan2(tY - cY, tX - cX));
+
+            if(angle < 0) { angle += 360; }
+            return angle;
+        }
+
+        /* When window has sucessfully started up.. */
+        window.onload = function(){                
+            init();
+        };            
+        </script>    
+
+        <div id="tabs">
+            <ul>
+                <li><a href="#tabs-1">Demo</a></li>
+                <li><a href="#tabs-2">Information</a></li>
+            </ul>
+            
+            <canvas id="my_canvas" width="1800" height="850"></canvas>
+
+            <div id="tabs-1">
+
+                <div id="raphael_canvas"></div>
+                <div id="rectangle"></div>
+                <div id="highlight_box"></div>
+                <div id="highlight_box2"></div>
+                <!-- ==============  Degrees Slider ============ -->
+                <label id="lbl_fuelslide">Fuel Injection Duration</label>
+                <div id="slider_Fuel"></div>
+                <input type="text" id="box_Fuel" style="border:1; font-weight:bold;">
+
+                <!-- ============  Engine RPM Slider =========== -->
+                <label id="lbl_rpmslide">Speed</label>
+                <div id="slider_RPM"></div>
+                <input type="text" id="box_RPM" style="border:1; font-weight:bold;">
+
+                <!-- ==========  Animation Stop/Start ========== -->
+                <label id="lbl_anim">Engine</label>
+                <div id="radio_anim">
+                    <input type="radio" id="start" name="radio_anim" checked="checked"> <label for="start">Start</label>
+                    <input type="radio" id="stop" name="radio_anim">                    <label for="stop">Stop</label>
+                </div>
+
+                <img src="Images/EKLogo.png"    id="logo"      alt="Freescale Logo" width="320"/>
+                <img src="Images/Watermark.png" id="watermark" alt="Watermark"      width="290"/>
+       
+                <label id="title">Engine Knock Detection</label>
+                <label id="subtitle">using Matterhorn</label>
+
+                <label id="lbl_1">1. Fuel & Air Intake</label>
+                <label id="lbl_2">2. Compression</label>
+                <label id="lbl_3">3. Combustion</label>
+                <label id="lbl_4">4. Exhaustion</label>
+                <label id="lbl_deg"><b>Degrees:</b></label>
+                <label id="lbl_rpm"><b>RPM:</b></label>
+                <label id="lbl_rev"><b>1 Rev:</b></label>
+                <label id="lbl_graphRPM">Engine RPM</label>
+                <label id="lbl_graphKnock">Knock Value</label>
+                <label id="lbl_graphTiming">Timing Diagram</label>
+                <label id="lbl_knock">Engine Knock</label>
+                <label id="lbl_graphgifknock">Time Domain</label>
+                <label id="lbl_graphgiffftknock">Freq Domain</label>
+                
+                <div class="graph" id="graph_rpm"></div>                
+                <div class="graph" id="graph_timing"></div>
+                <div class="graph" id="graph_knock1"></div>              
+                <img class="graph" src="GIFs/knock.gif"       id="graph_time_knock"   alt="graph_knock"       width="230" height="200"/> 
+                <img class="graph" src="GIFs/noknock.gif"     id="graph_time_noknock" alt="graph_noknock"     width="230" height="200"/>     
+                <img class="graph" src="GIFs/FFT_knock.gif"   id="graph_FFT_knock"    alt="graph_FFT_knock"   width="230" height="200"/>
+                <img class="graph" src="GIFs/FFT_noknock.gif" id="graph_FFT_noknock"  alt="graph_FFT_noknock" width="230" height="200"/>     
+   
+                <div id="legend"></div>
+            </div>
+            
+            <div id="tabs-2">
+                <img src="Images/Diagram.png" id="diagram" alt="diagram" width="1700"/>          
+                <img class="graph" src="GIFs/noknock.gif"     id="graph_time_noknock2" alt="graph_noknock2"     width="207" height="180"/>     
+                <img class="graph" src="GIFs/knock.gif"       id="graph_time_knock2"   alt="graph_knock2"       width="207" height="180"/>     
+                <img class="graph" src="GIFs/FFT_noknock.gif" id="graph_FFT_noknock2"  alt="graph_FFT_noknock2" width="230" height="200"/>     
+                <img class="graph" src="GIFs/FFT_knock.gif"   id="graph_FFT_knock2"    alt="graph_FFT_knock2"   width="230" height="200"/>
+                
+                <div id="graph_knock2"></div>               
+            </div>          
+        </div>
+          
+        <!--<textarea id="serial" name="mybox" rows="4" cols="50"></textarea>-->
+     
+    </body>
+</html>
